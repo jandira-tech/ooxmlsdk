@@ -1400,6 +1400,15 @@ pub struct SdkPackageStorage {
   preferred_main_part_content_type: Option<&'static str>,
 }
 
+/// Opens an archive at offset 0 first. zip 9's default `ArchiveOffset::Detect`
+/// scans the whole input for central directory headers before it trusts the
+/// end record, which reads every part of a positional source on open. A
+/// package without prepended data has its archive at offset 0; callers fall
+/// back to `Detect` when that fails.
+pub(crate) const ARCHIVE_AT_START: zip::read::Config = zip::read::Config {
+  archive_offset: zip::read::ArchiveOffset::Known(0),
+};
+
 impl SdkPackageStorage {
   pub(crate) fn create(preferred_main_part_content_type: Option<&'static str>) -> Self {
     Self {
@@ -1454,7 +1463,10 @@ impl SdkPackageStorage {
 
   fn open_archive(reader: ArchiveReader) -> Result<Self, SdkError> {
     let mut raw_reader = reader.clone();
-    let mut archive = zip::ZipArchive::new(reader)?;
+    let mut archive = match zip::ZipArchive::with_config(ARCHIVE_AT_START, reader.clone()) {
+      Ok(archive) => archive,
+      Err(_) => zip::ZipArchive::new(reader)?,
+    };
     let entry_names = read_archive_entry_names(&mut archive, &mut raw_reader)?;
     let opened = read_archive_model(&mut archive, &entry_names)?;
     let OpenedArchiveModel {
@@ -3539,10 +3551,10 @@ fn read_archive_entry_names<R: Read + Seek>(
   let mut names = Vec::with_capacity(archive.len());
   for entry_index in 0..archive.len() {
     let entry = archive.by_index_raw(entry_index)?;
-    let mut name = entry.name().to_string();
+    let mut name = entry.name()?.into_owned();
     let has_unicode_path = entry
       .extra_data()
-      .is_some_and(|extra| zip_extra_field_present(extra, ZIP_UNICODE_PATH_EXTRA_FIELD_ID));
+      .is_some_and(|extra| zip_extra_field_present(&extra, ZIP_UNICODE_PATH_EXTRA_FIELD_ID));
     let central_header_start = entry.central_header_start();
     drop(entry);
 
@@ -3604,14 +3616,14 @@ fn read_archive_entry_by_index<R: Read + Seek>(
   let capacity = usize::try_from(entry.size()).map_err(|_| {
     SdkError::CommonError(format!(
       "ZIP entry {} is too large for this platform",
-      entry.name()
+      entry.name().unwrap_or_default()
     ))
   })?;
   let mut bytes = Vec::new();
   bytes.try_reserve_exact(capacity).map_err(|error| {
     SdkError::CommonError(format!(
       "cannot allocate {capacity} bytes for ZIP entry {}: {error}",
-      entry.name()
+      entry.name().unwrap_or_default()
     ))
   })?;
   entry.read_to_end(&mut bytes)?;
@@ -3768,13 +3780,13 @@ mod tests {
     buffer.into_inner().into()
   }
 
-  fn unicode_path_options(target_name: &str) -> zip::write::FullFileOptions<'static> {
+  fn unicode_path_options(target_name: &str) -> zip::write::FullFileOptions<'static, 'static> {
     let mut options =
       zip::write::FullFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     let mut unicode_path = vec![1, 0, 0, 0, 0];
     unicode_path.extend_from_slice(target_name.as_bytes());
     options
-      .add_extra_data(ZIP_UNICODE_PATH_EXTRA_FIELD_ID, unicode_path, false)
+      .add_extra_field(ZIP_UNICODE_PATH_EXTRA_FIELD_ID, unicode_path, false)
       .unwrap();
     options
   }
@@ -3912,6 +3924,23 @@ mod tests {
       .unwrap()
       .root_element(&reopened)
       .unwrap();
+  }
+
+  #[test]
+  fn package_with_prepended_data_still_opens() {
+    let mut bytes = b"prepended data before the archive".to_vec();
+    bytes.extend_from_slice(&package_with_large_unloaded_part());
+
+    let document = crate::parts::wordprocessing_document::WordprocessingDocument::new(Cursor::new(
+      bytes.clone(),
+    ))
+    .unwrap();
+    document
+      .main_document_part()
+      .unwrap()
+      .root_element(&document)
+      .unwrap();
+    assert!(!crate::sdk::is_encrypted_office_file(&mut Cursor::new(bytes)).unwrap());
   }
 
   #[test]

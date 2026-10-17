@@ -46,7 +46,14 @@ where
   }
 
   reader.seek(std::io::SeekFrom::Start(0))?;
-  let Ok(mut archive) = zip::ZipArchive::new(reader) else {
+  let config =
+    if zip::ZipArchive::with_config(crate::common::ARCHIVE_AT_START, &mut *reader).is_ok() {
+      crate::common::ARCHIVE_AT_START
+    } else {
+      zip::read::Config::default()
+    };
+  reader.seek(std::io::SeekFrom::Start(0))?;
+  let Ok(mut archive) = zip::ZipArchive::with_config(config, reader) else {
     return Ok(false);
   };
   let Ok(mut content_types) = archive.by_name("[Content_Types].xml") else {

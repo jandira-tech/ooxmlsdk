@@ -12758,7 +12758,7 @@ fn paragraph_edge_font_sizes(
   let first_pt = segments
     .first()
     .and_then(|segment| segment.lines.first())
-    .map(&line_font_size)
+    .map(line_font_size)
     .unwrap_or(fallback_font_size_pt);
   let last_pt = segments
     .last()

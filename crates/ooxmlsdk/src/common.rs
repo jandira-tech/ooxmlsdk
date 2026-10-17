@@ -17,9 +17,9 @@ pub use error::{
 };
 #[cfg(feature = "parts")]
 pub(crate) use package::{
-  NewPartDescriptor, NewPartTargetMode, PackageSaveEntry, PackageToken, PartKey, PartSlot,
-  RelationshipInfo, RelationshipSet, SdkPackageStorage, StoredPart, create_package_temp_file,
-  default_part_extension_for_content_type, replace_package_file,
+  ARCHIVE_AT_START, NewPartDescriptor, NewPartTargetMode, PackageSaveEntry, PackageToken, PartKey,
+  PartSlot, RelationshipInfo, RelationshipSet, SdkPackageStorage, StoredPart,
+  create_package_temp_file, default_part_extension_for_content_type, replace_package_file,
 };
 #[cfg(feature = "parts")]
 pub use package::{
